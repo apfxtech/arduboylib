@@ -146,7 +146,7 @@ public:
     void display(bool clear);
     void applyDeferredDisplayOps();
 
-    inline void invert(bool);
+    void invert(bool);
 
     void drawPixel(int16_t x, int16_t y, uint8_t color);
     void drawFastHLine(int16_t x, int16_t y, int16_t w, uint8_t color);

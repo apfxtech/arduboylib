@@ -1,4 +1,5 @@
 #include "../Arduboy2.h"
+#include "../runtime.h"
 
 Arduboy2Base* arduboy_ptr = nullptr;
 Sprites* sprites_ptr = nullptr;

@@ -180,7 +180,7 @@ static void rt_view_port_draw_callback(Canvas* canvas, void* context) {
     if(dst) {
         const uint8_t* src = state->front_buffer;
         if(inverted) {
-            memcpy(dst, src, n);
+            memcpy(dst, src, RuntimeBufferSize);
         } else {
             for(size_t i = 0; i < RuntimeBufferSize; i++) {
                 dst[i] = (src[i] ^ 0xFFu);
@@ -287,7 +287,7 @@ extern "C" int32_t arduboy_app(void* p) {
     }
 
     Arduboy2Base* primary = rt_primary_arduboy();
-    primary.audio.off();
+    primary->audio.off();
 
     __atomic_store_n((bool*)&state->input_cb_enabled, false, __ATOMIC_RELEASE);
 

@@ -1,4 +1,4 @@
-#include "ArduboyTones.h"
+#include "../ArduboyTones.h"
 
 static int32_t ardulib_tone_sound_thread_fn(void* /*ctx*/) {
     ArduboyToneSoundRequest req;
