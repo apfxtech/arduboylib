@@ -35,8 +35,8 @@ using uint24_t = uint32_t;
 #define DOWN_BUTTON  0x02
 #define LEFT_BUTTON  0x04
 #define RIGHT_BUTTON 0x08
-#define A_BUTTON     0x20
-#define B_BUTTON     0x10
+#define A_BUTTON     0x10
+#define B_BUTTON     0x20
 #endif
 
 #ifndef INPUT_UP
@@ -52,10 +52,10 @@ using uint24_t = uint32_t;
 #define INPUT_RIGHT RIGHT_BUTTON
 #endif
 #ifndef INPUT_A
-#define INPUT_A B_BUTTON
+#define INPUT_A A_BUTTON
 #endif
 #ifndef INPUT_B
-#define INPUT_B A_BUTTON
+#define INPUT_B B_BUTTON
 #endif
 
 #define ARDUBOY_LIB_VER               60000
@@ -211,7 +211,7 @@ public:
     }
 
     void setFrameRate(uint8_t fps) {
-        if(fps == 0) fps = 60;
+        if(fps == 0) fps = 30;
         uint32_t d = 1000u / fps;
         frame_duration_ms_ = d ? d : 1u;
     }
@@ -719,9 +719,9 @@ private:
         case InputKeyRight:
             return INPUT_RIGHT;
         case InputKeyOk:
-            return INPUT_A;
-        case InputKeyBack:
             return INPUT_B;
+        case InputKeyBack:
+            return INPUT_A;
         default:
             return 0;
         }
@@ -1151,7 +1151,7 @@ private:
     uint8_t text_bg_ = BLACK;
     bool text_bg_enabled_ = false;
 
-    uint32_t frame_duration_ms_ = 16;
+    uint32_t frame_duration_ms_ = 33;
     uint32_t last_frame_ms_ = 0;
     uint32_t frame_count_ = 0;
     bool pending_clear_after_present_ = false;
@@ -1167,43 +1167,24 @@ class Arduboy2 : public Arduboy2Base {};
 // Legacy compatibility shim used by older Arduino sketches (e.g. microtd).
 class BeepPin1 {
 public:
-    void begin() {
-    }
-    void timer() {
-    }
-    uint16_t freq(uint16_t f) const {
-        return f;
-    }
-    void tone(uint16_t, uint16_t) {
-    }
+    void begin();
+    void timer();
+    uint16_t freq(uint16_t f) const;
+    void tone(uint16_t, uint16_t);
 };
 
 class Sprites {
 public:
-    static void setArduboy(Arduboy2Base* a) {
-        ab_ = a;
-    }
+    static void setArduboy(Arduboy2Base* a);
 
-    static void drawOverwrite(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame = 0) {
-        if(!ab_ || !bmp) return;
-        ab_->drawSolidBitmapFrame(x, y, bmp, frame);
-    }
+    static void drawOverwrite(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame = 0);
 
-    static void drawSelfMasked(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame = 0) {
-        if(!ab_ || !bmp) return;
-        ab_->drawBitmapFrame(x, y, bmp, frame);
-    }
+    static void drawSelfMasked(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame = 0);
 
-    static void drawErase(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame = 0) {
-        if(!ab_ || !bmp) return;
-        ab_->eraseBitmapFrame(x, y, bmp, frame);
-    }
+    static void drawErase(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame = 0);
 
-    static void drawPlusMask(int16_t x, int16_t y, const uint8_t* plusmask, uint8_t frame = 0) {
-        if(!ab_) return;
-        ab_->drawPlusMask(x, y, plusmask, frame);
-    }
+    static void drawPlusMask(int16_t x, int16_t y, const uint8_t* plusmask, uint8_t frame = 0);
 
 private:
-    inline static Arduboy2Base* ab_ = nullptr;
+    static Arduboy2Base* ab_;
 };

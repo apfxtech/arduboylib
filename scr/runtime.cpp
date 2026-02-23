@@ -8,6 +8,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef ARDULIB_USE_ATM
+#include "../ATMlib.h"
+#endif
+
+extern Arduboy2Base* arduboy_ptr;
+extern Sprites* sprites_ptr;
+extern Sprites* ardulib_default_sprites_get(void);
+
 namespace {
 
 static constexpr size_t RuntimeWidth = 128u;
@@ -31,6 +39,9 @@ typedef struct {
 
 static ArduboyRuntimeState* rt_state = NULL;
 static Arduboy2Base rt_input_bridge;
+#ifdef ARDULIB_USE_ATM
+static bool rt_atm_initialized = false;
+#endif
 
 static void rt_wait_input_callbacks_idle(ArduboyRuntimeState* state) {
     if(!state) return;
@@ -52,7 +63,30 @@ volatile bool g_arduboy_force_norm = false;
 
 uint8_t* buf = NULL;
 
-void __attribute__((weak)) arduboy_runtime_on_begin(
+static Arduboy2Base* rt_primary_arduboy(void) {
+    if(arduboy_ptr) return arduboy_ptr;
+    return &rt_input_bridge;
+}
+
+static Arduboy2Base::InputContext* rt_primary_input_context(void) {
+    Arduboy2Base* primary = rt_primary_arduboy();
+    return primary ? primary->inputContext() : nullptr;
+}
+
+static InputKey rt_map_input_key(InputKey key) {
+    return key;
+}
+
+static uint8_t rt_map_buttons(uint8_t buttons) {
+    return buttons;
+}
+
+static uint8_t rt_transform_byte(uint8_t value, size_t index) {
+    UNUSED(index);
+    return (uint8_t)(value ^ 0xFFu);
+}
+
+static void rt_runtime_begin(
     uint8_t* screen_buffer,
     volatile uint8_t* input_state,
     FuriMutex* game_mutex,
@@ -61,38 +95,48 @@ void __attribute__((weak)) arduboy_runtime_on_begin(
     UNUSED(input_state);
     UNUSED(game_mutex);
     UNUSED(exit_requested);
+
+    if(!arduboy_ptr) {
+        arduboy_ptr = arduboy_runtime_bridge();
+    }
+
+    if(!sprites_ptr) {
+        sprites_ptr = ardulib_default_sprites_get();
+    }
+
+    if(arduboy_ptr) {
+        Sprites::setArduboy(arduboy_ptr);
+    }
+
+#ifdef ARDULIB_USE_ATM
+    atm_system_init();
+    rt_atm_initialized = true;
+    if(arduboy_ptr) {
+        atm_set_enabled(arduboy_ptr->audio.enabled() ? 1u : 0u);
+    } else {
+        atm_set_enabled(1u);
+    }
+#endif
 }
 
-Arduboy2Base* __attribute__((weak)) arduboy_runtime_primary_arduboy(void) {
-    return nullptr;
+static void rt_runtime_idle(void) {
+#ifdef ARDULIB_USE_ATM
+    Arduboy2Base* primary = rt_primary_arduboy();
+    if(primary) {
+        atm_set_enabled(primary->audio.enabled() ? 1u : 0u);
+    }
+#endif
+    furi_delay_ms(1);
 }
 
-Arduboy2Base::InputContext* __attribute__((weak)) arduboy_runtime_primary_input_context(void) {
-    Arduboy2Base* primary = arduboy_runtime_primary_arduboy();
-    return primary ? primary->inputContext() : nullptr;
-}
-
-InputKey __attribute__((weak)) arduboy_runtime_map_input_key(InputKey key) {
-    return key;
-}
-
-uint8_t __attribute__((weak)) arduboy_runtime_map_buttons(uint8_t buttons) {
-    return buttons;
-}
-
-uint8_t __attribute__((weak)) arduboy_runtime_transform_byte(uint8_t value, size_t index) {
-    UNUSED(index);
-    return (uint8_t)(value ^ 0xFFu);
-}
-
-uint32_t __attribute__((weak)) arduboy_runtime_fps(void) {
-    return 60u;
-}
-
-void __attribute__((weak)) arduboy_runtime_idle(void) {
-}
-
-void __attribute__((weak)) arduboy_runtime_on_stop(void) {
+static void rt_runtime_on_stop(void) {
+#ifdef ARDULIB_USE_ATM
+    if(rt_atm_initialized) {
+        atm_system_deinit();
+        rt_atm_initialized = false;
+    }
+    arduboy_tone_sound_system_deinit();
+#endif
 }
 
 Arduboy2Base* arduboy_runtime_bridge(void) {
@@ -106,16 +150,18 @@ uint16_t time_ms(void) {
 uint8_t poll_btns(void) {
     uint8_t mask = 0;
 
-    rt_input_bridge.pollButtons();
+    Arduboy2Base* primary = rt_primary_arduboy();
+    if(!primary) return 0;
+    primary->pollButtons();
 
-    if(rt_input_bridge.pressed(UP_BUTTON)) mask |= UP_BUTTON;
-    if(rt_input_bridge.pressed(DOWN_BUTTON)) mask |= DOWN_BUTTON;
-    if(rt_input_bridge.pressed(LEFT_BUTTON)) mask |= LEFT_BUTTON;
-    if(rt_input_bridge.pressed(RIGHT_BUTTON)) mask |= RIGHT_BUTTON;
-    if(rt_input_bridge.pressed(A_BUTTON)) mask |= A_BUTTON;
-    if(rt_input_bridge.pressed(B_BUTTON)) mask |= B_BUTTON;
+    if(primary->pressed(UP_BUTTON)) mask |= UP_BUTTON;
+    if(primary->pressed(DOWN_BUTTON)) mask |= DOWN_BUTTON;
+    if(primary->pressed(LEFT_BUTTON)) mask |= LEFT_BUTTON;
+    if(primary->pressed(RIGHT_BUTTON)) mask |= RIGHT_BUTTON;
+    if(primary->pressed(A_BUTTON)) mask |= A_BUTTON;
+    if(primary->pressed(B_BUTTON)) mask |= B_BUTTON;
 
-    return arduboy_runtime_map_buttons(mask);
+    return rt_map_buttons(mask);
 }
 
 static void rt_input_view_port_callback(InputEvent* event, void* context) {
@@ -129,12 +175,10 @@ static void rt_input_view_port_callback(InputEvent* event, void* context) {
 
     if(__atomic_load_n((bool*)&state->input_cb_enabled, __ATOMIC_ACQUIRE)) {
         InputEvent mapped_event = *event;
-        mapped_event.key = arduboy_runtime_map_input_key(mapped_event.key);
+        mapped_event.key = rt_map_input_key(mapped_event.key);
 
-        Arduboy2Base::FlipperInputCallback(&mapped_event, rt_input_bridge.inputContext());
-
-        Arduboy2Base::InputContext* primary_ctx = arduboy_runtime_primary_input_context();
-        if(primary_ctx && (primary_ctx != rt_input_bridge.inputContext())) {
+        Arduboy2Base::InputContext* primary_ctx = rt_primary_input_context();
+        if(primary_ctx) {
             Arduboy2Base::FlipperInputCallback(&mapped_event, primary_ctx);
         }
     }
@@ -148,11 +192,11 @@ static void rt_view_port_draw_callback(Canvas* canvas, void* context) {
 
     if(furi_mutex_acquire(state->fb_mutex, FuriWaitForever) != FuriStatusOk) return;
 
-    uint8_t* dst = canvas_get_buffer(canvas);
+    uint8_t* dst = u8g2_GetBufferPtr(&canvas->fb);
     if(dst) {
         const uint8_t* src = state->front_buffer;
         for(size_t i = 0; i < RuntimeBufferSize; i++) {
-            dst[i] = arduboy_runtime_transform_byte(src[i], i);
+            dst[i] = rt_transform_byte(src[i], i);
         }
     }
 
@@ -163,7 +207,7 @@ static bool rt_step_frame(ArduboyRuntimeState* state, uint32_t fb_wait) {
     if(!state || state->exit_requested) return false;
     if(furi_mutex_acquire(state->game_mutex, 0) != FuriStatusOk) return false;
 
-    Arduboy2Base* primary = arduboy_runtime_primary_arduboy();
+    Arduboy2Base* primary = rt_primary_arduboy();
     uint32_t frame_before = primary ? primary->frameCount() : 0u;
 
     loop();
@@ -216,7 +260,7 @@ extern "C" int32_t arduboy_app(void* p) {
 
     rt_input_bridge.begin(
         state->screen_buffer, &state->input_state, state->game_mutex, &state->exit_requested);
-    arduboy_runtime_on_begin(
+    rt_runtime_begin(
         state->screen_buffer, &state->input_state, state->game_mutex, &state->exit_requested);
 
     state->gui = (Gui*)furi_record_open(RECORD_GUI);
@@ -248,38 +292,12 @@ extern "C" int32_t arduboy_app(void* p) {
 
     view_port_update(state->view_port);
 
-    const uint32_t runtime_fps = arduboy_runtime_fps();
-    const uint32_t tick_hz = furi_kernel_get_tick_frequency();
-    uint32_t frame_ticks = 0;
-    uint32_t next_tick = furi_get_tick();
-    if(runtime_fps && tick_hz) {
-        frame_ticks = (tick_hz + (runtime_fps / 2u)) / runtime_fps;
-        if(frame_ticks == 0) frame_ticks = 1;
-    }
-
     while(!state->exit_requested) {
-        if(frame_ticks) {
-            const uint32_t now = furi_get_tick();
-
-            if((int32_t)(now - next_tick) < 0) {
-                const uint32_t dt_ticks = next_tick - now;
-                const uint32_t dt_ms = (dt_ticks * 1000u) / tick_hz;
-                furi_delay_ms(dt_ms ? dt_ms : 1);
-                arduboy_runtime_idle();
-                continue;
-            }
-
-            if((int32_t)(now - next_tick) > (int32_t)(frame_ticks * 2u)) {
-                next_tick = now;
-            }
-            next_tick += frame_ticks;
-        }
-
         (void)rt_step_frame(state, 0);
-        arduboy_runtime_idle();
+        rt_runtime_idle();
     }
 
-    arduboy_runtime_on_stop();
+    rt_runtime_on_stop();
 
     __atomic_store_n((bool*)&state->input_cb_enabled, false, __ATOMIC_RELEASE);
 

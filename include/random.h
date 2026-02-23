@@ -14,10 +14,10 @@ extern "C" {
 /*
  * Two explicit backends:
  * - Default (no define): Flipper HAL RNG
- * - With ARDUBBOYLIB_RANDOM_LEGACY: legacy xorshift16 RNG
+ * - With ARDULIB_RANDOM_LEGACY: legacy xorshift16 RNG
  */
 
-#ifdef ARDUBBOYLIB_RANDOM_LEGACY
+#ifdef ARDULIB_RANDOM_LEGACY
 /* ============================ LEGACY BACKEND ============================ */
 
 static inline uint16_t* arduboy_legacy_random_state_ptr(void) {
