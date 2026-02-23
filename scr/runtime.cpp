@@ -13,7 +13,6 @@ namespace {
 static constexpr size_t RuntimeWidth = 128u;
 static constexpr size_t RuntimeHeight = 64u;
 static constexpr size_t RuntimeBufferSize = (RuntimeWidth * RuntimeHeight) / 8u;
-static constexpr uint32_t RuntimeInputQueueSize = 32u;
 
 typedef struct {
     uint8_t screen_buffer[RuntimeBufferSize];
@@ -21,16 +20,24 @@ typedef struct {
 
     Gui* gui;
     ViewPort* view_port;
-    FuriMessageQueue* input_queue;
     FuriMutex* fb_mutex;
     FuriMutex* game_mutex;
 
     volatile uint8_t input_state;
     volatile bool exit_requested;
+    volatile bool input_cb_enabled;
+    volatile uint32_t input_cb_inflight;
 } ArduboyRuntimeState;
 
 static ArduboyRuntimeState* rt_state = NULL;
 static Arduboy2Base rt_input_bridge;
+
+static void rt_wait_input_callbacks_idle(ArduboyRuntimeState* state) {
+    if(!state) return;
+    while(__atomic_load_n((uint32_t*)&state->input_cb_inflight, __ATOMIC_ACQUIRE) != 0) {
+        furi_delay_ms(1);
+    }
+}
 
 } // namespace
 
@@ -83,7 +90,6 @@ uint32_t __attribute__((weak)) arduboy_runtime_fps(void) {
 }
 
 void __attribute__((weak)) arduboy_runtime_idle(void) {
-    furi_delay_ms(1);
 }
 
 void __attribute__((weak)) arduboy_runtime_on_stop(void) {
@@ -116,21 +122,13 @@ static void rt_input_view_port_callback(InputEvent* event, void* context) {
     if(!event || !context) return;
 
     ArduboyRuntimeState* state = (ArduboyRuntimeState*)context;
-    if(!state->input_queue) return;
+    if(!__atomic_load_n((bool*)&state->input_cb_enabled, __ATOMIC_ACQUIRE)) return;
+    if((event->type != InputTypePress) && (event->type != InputTypeRelease)) return;
 
-    if((event->type != InputTypePress) && (event->type != InputTypeRelease) &&
-       (event->type != InputTypeRepeat))
-        return;
+    (void)__atomic_fetch_add((uint32_t*)&state->input_cb_inflight, 1, __ATOMIC_ACQ_REL);
 
-    (void)furi_message_queue_put(state->input_queue, event, FuriWaitForever);
-}
-
-static void rt_process_input_queue(ArduboyRuntimeState* state) {
-    if(!state || !state->input_queue) return;
-
-    InputEvent event;
-    while(furi_message_queue_get(state->input_queue, &event, 0) == FuriStatusOk) {
-        InputEvent mapped_event = event;
+    if(__atomic_load_n((bool*)&state->input_cb_enabled, __ATOMIC_ACQUIRE)) {
+        InputEvent mapped_event = *event;
         mapped_event.key = arduboy_runtime_map_input_key(mapped_event.key);
 
         Arduboy2Base::FlipperInputCallback(&mapped_event, rt_input_bridge.inputContext());
@@ -140,6 +138,8 @@ static void rt_process_input_queue(ArduboyRuntimeState* state) {
             Arduboy2Base::FlipperInputCallback(&mapped_event, primary_ctx);
         }
     }
+
+    (void)__atomic_fetch_sub((uint32_t*)&state->input_cb_inflight, 1, __ATOMIC_ACQ_REL);
 }
 
 static void rt_view_port_draw_callback(Canvas* canvas, void* context) {
@@ -148,7 +148,7 @@ static void rt_view_port_draw_callback(Canvas* canvas, void* context) {
 
     if(furi_mutex_acquire(state->fb_mutex, FuriWaitForever) != FuriStatusOk) return;
 
-    uint8_t* dst = u8g2_GetBufferPtr(&canvas->fb);
+    uint8_t* dst = canvas_get_buffer(canvas);
     if(dst) {
         const uint8_t* src = state->front_buffer;
         for(size_t i = 0; i < RuntimeBufferSize; i++) {
@@ -166,7 +166,6 @@ static bool rt_step_frame(ArduboyRuntimeState* state, uint32_t fb_wait) {
     Arduboy2Base* primary = arduboy_runtime_primary_arduboy();
     uint32_t frame_before = primary ? primary->frameCount() : 0u;
 
-    rt_process_input_queue(state);
     loop();
 
     uint32_t frame_after = primary ? primary->frameCount() : 1u;
@@ -200,10 +199,10 @@ extern "C" int32_t arduboy_app(void* p) {
 
     state->fb_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     state->game_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
-    state->input_queue = furi_message_queue_alloc(RuntimeInputQueueSize, sizeof(InputEvent));
+    state->input_cb_enabled = true;
+    state->input_cb_inflight = 0;
 
-    if(!state->fb_mutex || !state->game_mutex || !state->input_queue) {
-        if(state->input_queue) furi_message_queue_free(state->input_queue);
+    if(!state->fb_mutex || !state->game_mutex) {
         if(state->fb_mutex) furi_mutex_free(state->fb_mutex);
         if(state->game_mutex) furi_mutex_free(state->game_mutex);
         free(state);
@@ -225,7 +224,6 @@ extern "C" int32_t arduboy_app(void* p) {
     if(!state->gui || !state->view_port) {
         if(state->view_port) view_port_free(state->view_port);
         if(state->gui) furi_record_close(RECORD_GUI);
-        furi_message_queue_free(state->input_queue);
         furi_mutex_free(state->fb_mutex);
         furi_mutex_free(state->game_mutex);
         free(state);
@@ -250,12 +248,40 @@ extern "C" int32_t arduboy_app(void* p) {
 
     view_port_update(state->view_port);
 
+    const uint32_t runtime_fps = arduboy_runtime_fps();
+    const uint32_t tick_hz = furi_kernel_get_tick_frequency();
+    uint32_t frame_ticks = 0;
+    uint32_t next_tick = furi_get_tick();
+    if(runtime_fps && tick_hz) {
+        frame_ticks = (tick_hz + (runtime_fps / 2u)) / runtime_fps;
+        if(frame_ticks == 0) frame_ticks = 1;
+    }
+
     while(!state->exit_requested) {
+        if(frame_ticks) {
+            const uint32_t now = furi_get_tick();
+
+            if((int32_t)(now - next_tick) < 0) {
+                const uint32_t dt_ticks = next_tick - now;
+                const uint32_t dt_ms = (dt_ticks * 1000u) / tick_hz;
+                furi_delay_ms(dt_ms ? dt_ms : 1);
+                arduboy_runtime_idle();
+                continue;
+            }
+
+            if((int32_t)(now - next_tick) > (int32_t)(frame_ticks * 2u)) {
+                next_tick = now;
+            }
+            next_tick += frame_ticks;
+        }
+
         (void)rt_step_frame(state, 0);
         arduboy_runtime_idle();
     }
 
     arduboy_runtime_on_stop();
+
+    __atomic_store_n((bool*)&state->input_cb_enabled, false, __ATOMIC_RELEASE);
 
     if(state->view_port && state->gui) {
         view_port_enabled_set(state->view_port, false);
@@ -264,14 +290,11 @@ extern "C" int32_t arduboy_app(void* p) {
         state->view_port = NULL;
     }
 
+    rt_wait_input_callbacks_idle(state);
+
     if(state->gui) {
         furi_record_close(RECORD_GUI);
         state->gui = NULL;
-    }
-
-    if(state->input_queue) {
-        furi_message_queue_free(state->input_queue);
-        state->input_queue = NULL;
     }
 
     if(state->fb_mutex) {

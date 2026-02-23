@@ -4,6 +4,7 @@
 #include "ArduboyTones.h"
 #include "ArduboyAudio.h"
 #include "EEPROM.h"
+#include "Tinyfont.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -34,8 +35,8 @@ using uint24_t = uint32_t;
 #define DOWN_BUTTON  0x02
 #define LEFT_BUTTON  0x04
 #define RIGHT_BUTTON 0x08
-#define A_BUTTON     0x10
-#define B_BUTTON     0x20
+#define A_BUTTON     0x20
+#define B_BUTTON     0x10
 #endif
 
 #ifndef INPUT_UP
@@ -51,17 +52,22 @@ using uint24_t = uint32_t;
 #define INPUT_RIGHT RIGHT_BUTTON
 #endif
 #ifndef INPUT_A
-#define INPUT_A A_BUTTON
+#define INPUT_A B_BUTTON
 #endif
 #ifndef INPUT_B
-#define INPUT_B B_BUTTON
+#define INPUT_B A_BUTTON
 #endif
 
 #define ARDUBOY_LIB_VER               60000
 #define ARDUBOY_UNIT_NAME_LEN         6
 #define ARDUBOY_UNIT_NAME_BUFFER_SIZE (ARDUBOY_UNIT_NAME_LEN + 1)
-#define BLACK                         1
-#define WHITE                         0
+#if defined(ARDUBOY_COLOR_ORIGINAL)
+#define BLACK 0
+#define WHITE 1
+#else
+#define BLACK 1
+#define WHITE 0
+#endif
 #define INVERT                        2
 #define CLEAR_BUFFER                  true
 #define RED_LED                       1
@@ -111,6 +117,9 @@ public:
         frame_count_ = 0;
         last_frame_ms_ = 0;
         resetInputState();
+    }
+
+    void begin() {
     }
 
     void begin(
@@ -335,6 +344,229 @@ public:
         uint8_t v = *dst;
         v = (uint8_t)((v & (uint8_t)~mask) | ((uint8_t)-(uint8_t)(color != 0) & mask));
         *dst = v;
+    }
+
+    void drawFastHLine(int16_t x, int16_t y, int16_t w, uint8_t color) {
+        if(!sBuffer || w <= 0) return;
+        if((uint16_t)y >= HEIGHT) return;
+
+        if(x < 0) {
+            w = (int16_t)(w + x);
+            x = 0;
+        }
+        if(w <= 0 || x >= WIDTH) return;
+        if((int32_t)x + (int32_t)w > WIDTH) {
+            w = (int16_t)(WIDTH - x);
+        }
+
+        const uint8_t mask = (uint8_t)(1u << (y & 7));
+        uint8_t* dst = sBuffer + x + (uint16_t)((y >> 3) * WIDTH);
+        if(color) {
+            for(int16_t i = 0; i < w; ++i) {
+                dst[i] |= mask;
+            }
+        } else {
+            const uint8_t inv_mask = (uint8_t)~mask;
+            for(int16_t i = 0; i < w; ++i) {
+                dst[i] &= inv_mask;
+            }
+        }
+    }
+
+    void drawFastVLine(int16_t x, int16_t y, int16_t h, uint8_t color) {
+        if(!sBuffer || h <= 0) return;
+        if((uint16_t)x >= WIDTH) return;
+
+        int32_t y0 = y;
+        int32_t y1 = (int32_t)y + (int32_t)h;
+        if(y0 < 0) y0 = 0;
+        if(y1 > HEIGHT) y1 = HEIGHT;
+        if(y0 >= y1) return;
+
+        const int16_t first_row = (int16_t)((int16_t)y0 >> 3);
+        const int16_t last_row = (int16_t)(((int16_t)(y1 - 1)) >> 3);
+        uint8_t* dst = sBuffer + x + first_row * WIDTH;
+
+        if(first_row == last_row) {
+            const uint8_t first_mask = (uint8_t)(0xFFu << ((uint8_t)y0 & 7));
+            const uint8_t last_mask = (uint8_t)(0xFFu >> (7 - (((uint8_t)(y1 - 1)) & 7)));
+            const uint8_t mask = (uint8_t)(first_mask & last_mask);
+            if(color) {
+                *dst |= mask;
+            } else {
+                *dst &= (uint8_t)~mask;
+            }
+            return;
+        }
+
+        const uint8_t first_mask = (uint8_t)(0xFFu << ((uint8_t)y0 & 7));
+        if(color) {
+            *dst |= first_mask;
+        } else {
+            *dst &= (uint8_t)~first_mask;
+        }
+        dst += WIDTH;
+
+        for(int16_t row = (int16_t)(first_row + 1); row < last_row; ++row, dst += WIDTH) {
+            *dst = color ? 0xFFu : 0x00u;
+        }
+
+        const uint8_t last_mask = (uint8_t)(0xFFu >> (7 - (((uint8_t)(y1 - 1)) & 7)));
+        if(color) {
+            *dst |= last_mask;
+        } else {
+            *dst &= (uint8_t)~last_mask;
+        }
+    }
+
+    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color) {
+        if(w <= 0 || h <= 0) return;
+        drawFastHLine(x, y, w, color);
+        drawFastHLine(x, (int16_t)(y + h - 1), w, color);
+        drawFastVLine(x, y, h, color);
+        drawFastVLine((int16_t)(x + w - 1), y, h, color);
+    }
+
+    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color) {
+        if(!sBuffer || w <= 0 || h <= 0) return;
+
+        int32_t x0 = x;
+        int32_t y0 = y;
+        int32_t x1 = (int32_t)x + (int32_t)w;
+        int32_t y1 = (int32_t)y + (int32_t)h;
+
+        if(x0 < 0) x0 = 0;
+        if(y0 < 0) y0 = 0;
+        if(x1 > WIDTH) x1 = WIDTH;
+        if(y1 > HEIGHT) y1 = HEIGHT;
+        if(x0 >= x1 || y0 >= y1) return;
+
+        const int16_t clipped_h = (int16_t)(y1 - y0);
+        for(int16_t xx = (int16_t)x0; xx < (int16_t)x1; ++xx) {
+            drawFastVLine(xx, (int16_t)y0, clipped_h, color);
+        }
+    }
+
+    void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint8_t color) {
+        int16_t dx = (x0 < x1) ? (x1 - x0) : (x0 - x1);
+        int16_t sx = (x0 < x1) ? 1 : -1;
+        int16_t dy = -((y0 < y1) ? (y1 - y0) : (y0 - y1));
+        int16_t sy = (y0 < y1) ? 1 : -1;
+        int16_t err = (int16_t)(dx + dy);
+
+        while(true) {
+            drawPixel(x0, y0, color);
+            if(x0 == x1 && y0 == y1) break;
+
+            int16_t e2 = (int16_t)(2 * err);
+            if(e2 >= dy) {
+                err = (int16_t)(err + dy);
+                x0 = (int16_t)(x0 + sx);
+            }
+            if(e2 <= dx) {
+                err = (int16_t)(err + dx);
+                y0 = (int16_t)(y0 + sy);
+            }
+        }
+    }
+
+    void fillCircle(int16_t x0, int16_t y0, int16_t r, uint8_t color) {
+        if(r < 0) return;
+        drawFastVLine(x0, (int16_t)(y0 - r), (int16_t)(2 * r + 1), color);
+
+        int16_t x = 0;
+        int16_t y = r;
+        int16_t d = (int16_t)(1 - r);
+
+        while(y > x) {
+            ++x;
+            if(d < 0) {
+                d = (int16_t)(d + 2 * x + 1);
+            } else {
+                --y;
+                d = (int16_t)(d + 2 * (x - y) + 1);
+            }
+
+            drawFastVLine((int16_t)(x0 + x), (int16_t)(y0 - y), (int16_t)(2 * y + 1), color);
+            drawFastVLine((int16_t)(x0 - x), (int16_t)(y0 - y), (int16_t)(2 * y + 1), color);
+            drawFastVLine((int16_t)(x0 + y), (int16_t)(y0 - x), (int16_t)(2 * x + 1), color);
+            drawFastVLine((int16_t)(x0 - y), (int16_t)(y0 - x), (int16_t)(2 * x + 1), color);
+        }
+    }
+
+    void drawBitmap(
+        int16_t x,
+        int16_t y,
+        const uint8_t* bitmap,
+        int16_t w,
+        int16_t h,
+        uint8_t color) {
+        if(!bitmap || !sBuffer || w <= 0 || h <= 0) return;
+        if(color) {
+            blitSelfMasked_(x, y, bitmap, w, h);
+        } else {
+            blitErase_(x, y, bitmap, w, h);
+        }
+    }
+
+    void setCursor(int16_t x, int16_t y) {
+        cursor_x_ = x;
+        cursor_y_ = y;
+    }
+
+    void setTextColor(uint8_t color) {
+        text_color_ = color;
+    }
+
+    void setTextBackground(uint8_t color) {
+        text_bg_ = color;
+        text_bg_enabled_ = true;
+    }
+
+    size_t write(uint8_t c) {
+        if(!sBuffer) return 0;
+
+        int16_t draw_x = cursor_x_;
+        int16_t draw_y = cursor_y_;
+        if(draw_y < 0) draw_y = 0;
+        if(draw_y >= HEIGHT) return 0;
+        if(draw_x < -4) draw_x = -4;
+        if(draw_x >= WIDTH) return 0;
+
+        Tinyfont font(sBuffer, WIDTH, HEIGHT);
+        font.setCursor(draw_x, draw_y);
+        font.setTextColor(text_color_);
+        font.maskText = text_bg_enabled_ && (text_bg_ != text_color_);
+
+        const size_t written = font.write(c);
+        cursor_x_ = font.getCursorX();
+        cursor_y_ = font.getCursorY();
+        return written;
+    }
+
+    void print(const char* text) {
+        if(!text) return;
+        while(*text) {
+            write((uint8_t)*text++);
+        }
+    }
+
+    void print(uint8_t value) {
+        printUnsigned_(value);
+    }
+
+    void print(int value) {
+        if(value < 0) {
+            write((uint8_t)'-');
+            const unsigned long abs_value = (unsigned long)(-(long)value);
+            printUnsigned_(abs_value);
+        } else {
+            printUnsigned_((unsigned long)value);
+        }
+    }
+
+    void print(unsigned long value) {
+        printUnsigned_(value);
     }
 
     void drawBitmapFrame(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame) {
@@ -892,6 +1124,19 @@ private:
         return out;
     }
 
+    void printUnsigned_(unsigned long value) {
+        char tmp[10];
+        uint8_t len = 0;
+        do {
+            tmp[len++] = (char)('0' + (value % 10ul));
+            value /= 10ul;
+        } while(value && (len < sizeof(tmp)));
+
+        while(len) {
+            write((uint8_t)tmp[--len]);
+        }
+    }
+
     FuriMutex* game_mutex_ = nullptr;
     bool external_timing_ = false;
 
@@ -899,6 +1144,12 @@ private:
     volatile uint8_t* input_press_latch_ = nullptr;
     InputRuntime input_runtime_{};
     InputContext input_ctx_{};
+
+    int16_t cursor_x_ = 0;
+    int16_t cursor_y_ = 0;
+    uint8_t text_color_ = WHITE;
+    uint8_t text_bg_ = BLACK;
+    bool text_bg_enabled_ = false;
 
     uint32_t frame_duration_ms_ = 16;
     uint32_t last_frame_ms_ = 0;
@@ -912,6 +1163,20 @@ private:
 };
 
 class Arduboy2 : public Arduboy2Base {};
+
+// Legacy compatibility shim used by older Arduino sketches (e.g. microtd).
+class BeepPin1 {
+public:
+    void begin() {
+    }
+    void timer() {
+    }
+    uint16_t freq(uint16_t f) const {
+        return f;
+    }
+    void tone(uint16_t, uint16_t) {
+    }
+};
 
 class Sprites {
 public:
