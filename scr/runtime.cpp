@@ -1,8 +1,8 @@
 #include "../runtime.h"
 
 #include <furi_hal.h>
-#include <gui/canvas_i.h>
 #include <gui/gui.h>
+#include <gui/canvas.h>
 #include <input/input.h>
 
 #include <stdlib.h>
@@ -12,9 +12,7 @@
 #include "../ATMlib.h"
 #endif
 
-extern Arduboy2Base* arduboy_ptr;
-extern Sprites* sprites_ptr;
-extern Sprites* ardulib_default_sprites_get(void);
+extern Arduboy2Base arduboy;
 
 namespace {
 
@@ -27,6 +25,7 @@ typedef struct {
     uint8_t front_buffer[RuntimeBufferSize];
 
     Gui* gui;
+    Canvas* canvas;
     ViewPort* view_port;
     FuriMutex* fb_mutex;
     FuriMutex* game_mutex;
@@ -38,9 +37,8 @@ typedef struct {
     volatile bool screen_inverted;
 } ArduboyRuntimeState;
 
-static ArduboyRuntimeState* rt_state = NULL;
-static Arduboy2Base rt_input_bridge;
-
+static ArduboyRuntimeState rt_state;
+static bool rt_state_initialized = false;
 static void rt_wait_input_callbacks_idle(ArduboyRuntimeState* state) {
     if(!state) return;
     while(__atomic_load_n((uint32_t*)&state->input_cb_inflight, __ATOMIC_ACQUIRE) != 0) {
@@ -62,29 +60,23 @@ volatile bool g_arduboy_force_norm = false;
 uint8_t* buf = NULL;
 
 bool arduboy_screen_inverted(void) {
-    if(!rt_state) return false;
-    return __atomic_load_n((bool*)&rt_state->screen_inverted, __ATOMIC_ACQUIRE);
+    if(!rt_state_initialized) return false;
+    return __atomic_load_n((bool*)&rt_state.screen_inverted, __ATOMIC_ACQUIRE);
 }
 
 void arduboy_screen_invert_toggle(void) {
-    if(!rt_state) return;
-    bool current = __atomic_load_n((bool*)&rt_state->screen_inverted, __ATOMIC_ACQUIRE);
-    __atomic_store_n((bool*)&rt_state->screen_inverted, !current, __ATOMIC_RELEASE);
+    if(!rt_state_initialized) return;
+    bool current = __atomic_load_n((bool*)&rt_state.screen_inverted, __ATOMIC_ACQUIRE);
+    __atomic_store_n((bool*)&rt_state.screen_inverted, !current, __ATOMIC_RELEASE);
 }
 
 void arduboy_screen_invert(bool invert) {
-    if(!rt_state) return;
-    __atomic_store_n((bool*)&rt_state->screen_inverted, invert, __ATOMIC_RELEASE);
-}
-
-static Arduboy2Base* rt_primary_arduboy(void) {
-    if(arduboy_ptr) return arduboy_ptr;
-    return &rt_input_bridge;
+    if(!rt_state_initialized) return;
+    __atomic_store_n((bool*)&rt_state.screen_inverted, invert, __ATOMIC_RELEASE);
 }
 
 static Arduboy2Base::InputContext* rt_primary_input_context(void) {
-    Arduboy2Base* primary = rt_primary_arduboy();
-    return primary ? primary->inputContext() : nullptr;
+    return arduboy.inputContext();
 }
 
 static InputKey rt_map_input_key(InputKey key) {
@@ -105,25 +97,7 @@ static void rt_runtime_begin(
     UNUSED(game_mutex);
     UNUSED(exit_requested);
 
-    if(!arduboy_ptr) {
-        arduboy_ptr = arduboy_runtime_bridge();
-    }
-
-    if(!sprites_ptr) {
-        sprites_ptr = ardulib_default_sprites_get();
-    }
-
-    if(arduboy_ptr) {
-        Sprites::setArduboy(arduboy_ptr);
-    }
-}
-
-static void rt_runtime_idle(void) {
-    furi_delay_ms(1);
-}
-
-Arduboy2Base* arduboy_runtime_bridge(void) {
-    return &rt_input_bridge;
+    Sprites::setArduboy(&arduboy);
 }
 
 uint16_t time_ms(void) {
@@ -133,16 +107,14 @@ uint16_t time_ms(void) {
 uint8_t poll_btns(void) {
     uint8_t mask = 0;
 
-    Arduboy2Base* primary = rt_primary_arduboy();
-    if(!primary) return 0;
-    primary->pollButtons();
+    arduboy.pollButtons();
 
-    if(primary->pressed(UP_BUTTON)) mask |= UP_BUTTON;
-    if(primary->pressed(DOWN_BUTTON)) mask |= DOWN_BUTTON;
-    if(primary->pressed(LEFT_BUTTON)) mask |= LEFT_BUTTON;
-    if(primary->pressed(RIGHT_BUTTON)) mask |= RIGHT_BUTTON;
-    if(primary->pressed(A_BUTTON)) mask |= A_BUTTON;
-    if(primary->pressed(B_BUTTON)) mask |= B_BUTTON;
+    if(arduboy.pressed(UP_BUTTON)) mask |= UP_BUTTON;
+    if(arduboy.pressed(DOWN_BUTTON)) mask |= DOWN_BUTTON;
+    if(arduboy.pressed(LEFT_BUTTON)) mask |= LEFT_BUTTON;
+    if(arduboy.pressed(RIGHT_BUTTON)) mask |= RIGHT_BUTTON;
+    if(arduboy.pressed(A_BUTTON)) mask |= A_BUTTON;
+    if(arduboy.pressed(B_BUTTON)) mask |= B_BUTTON;
 
     return rt_map_buttons(mask);
 }
@@ -169,22 +141,26 @@ static void rt_input_view_port_callback(InputEvent* event, void* context) {
     (void)__atomic_fetch_sub((uint32_t*)&state->input_cb_inflight, 1, __ATOMIC_ACQ_REL);
 }
 
-static void rt_view_port_draw_callback(Canvas* canvas, void* context) {
+static void rt_framebuffer_commit_callback(
+    uint8_t* data,
+    size_t size,
+    CanvasOrientation orientation,
+    void* context) {
     ArduboyRuntimeState* state = (ArduboyRuntimeState*)context;
-    if(!state || !canvas || !state->fb_mutex) return;
+    if(!state || !data) return;
+    if(size < RuntimeBufferSize) return;
+    (void)orientation;
 
     if(furi_mutex_acquire(state->fb_mutex, FuriWaitForever) != FuriStatusOk) return;
 
+    const uint8_t* src = state->front_buffer;
     bool inverted = __atomic_load_n((bool*)&state->screen_inverted, __ATOMIC_ACQUIRE);
-    uint8_t* dst = u8g2_GetBufferPtr(&canvas->fb);
-    if(dst) {
-        const uint8_t* src = state->front_buffer;
+    
+    for(size_t i = 0; i < RuntimeBufferSize; i++) {
         if(inverted) {
-            memcpy(dst, src, RuntimeBufferSize);
+            data[i] = src[i];
         } else {
-            for(size_t i = 0; i < RuntimeBufferSize; i++) {
-                dst[i] = (src[i] ^ 0xFFu);
-            }
+            data[i] = (uint8_t)(src[i] ^ 0xFF);
         }
     }
 
@@ -195,13 +171,12 @@ static bool rt_step_frame(ArduboyRuntimeState* state, uint32_t fb_wait) {
     if(!state || state->exit_requested) return false;
     if(furi_mutex_acquire(state->game_mutex, 0) != FuriStatusOk) return false;
 
-    Arduboy2Base* primary = rt_primary_arduboy();
-    uint32_t frame_before = primary ? primary->frameCount() : 0u;
+    uint32_t frame_before = arduboy.frameCount();
 
     loop();
 
-    uint32_t frame_after = primary ? primary->frameCount() : 1u;
-    bool has_new_frame = primary ? (frame_after != frame_before) : true;
+    uint32_t frame_after = arduboy.frameCount();
+    bool has_new_frame = (frame_after != frame_before);
 
     if(has_new_frame) {
         if(furi_mutex_acquire(state->fb_mutex, fb_wait) == FuriStatusOk) {
@@ -209,9 +184,7 @@ static bool rt_step_frame(ArduboyRuntimeState* state, uint32_t fb_wait) {
             furi_mutex_release(state->fb_mutex);
         }
 
-        if(primary) {
-            primary->applyDeferredDisplayOps();
-        }
+        arduboy.applyDeferredDisplayOps();
 
         if(state->view_port) view_port_update(state->view_port);
     }
@@ -220,14 +193,18 @@ static bool rt_step_frame(ArduboyRuntimeState* state, uint32_t fb_wait) {
     return has_new_frame;
 }
 
+static void rt_view_port_draw_callback(Canvas* canvas, void* context) {
+    UNUSED(context);
+    canvas_commit(canvas);
+}
+
+
 extern "C" int32_t arduboy_app(void* p) {
     UNUSED(p);
 
-    rt_state = (ArduboyRuntimeState*)malloc(sizeof(ArduboyRuntimeState));
-    if(!rt_state) return -1;
-    memset(rt_state, 0, sizeof(ArduboyRuntimeState));
-
-    ArduboyRuntimeState* state = rt_state;
+    ArduboyRuntimeState* state = &rt_state;
+    memset(state, 0, sizeof(ArduboyRuntimeState));
+    rt_state_initialized = true;
 
     state->fb_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     state->game_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
@@ -238,8 +215,7 @@ extern "C" int32_t arduboy_app(void* p) {
     if(!state->fb_mutex || !state->game_mutex) {
         if(state->fb_mutex) furi_mutex_free(state->fb_mutex);
         if(state->game_mutex) furi_mutex_free(state->game_mutex);
-        free(state);
-        rt_state = NULL;
+        rt_state_initialized = false;
         return -1;
     }
 
@@ -247,7 +223,7 @@ extern "C" int32_t arduboy_app(void* p) {
     memset(state->front_buffer, 0x00, RuntimeBufferSize);
     buf = state->screen_buffer;
 
-    rt_input_bridge.begin(
+    arduboy.begin(
         state->screen_buffer, &state->input_state, state->game_mutex, &state->exit_requested);
     rt_runtime_begin(
         state->screen_buffer, &state->input_state, state->game_mutex, &state->exit_requested);
@@ -259,15 +235,21 @@ extern "C" int32_t arduboy_app(void* p) {
         if(state->gui) furi_record_close(RECORD_GUI);
         furi_mutex_free(state->fb_mutex);
         furi_mutex_free(state->game_mutex);
-        free(state);
-        rt_state = NULL;
+        rt_state_initialized = false;
         buf = NULL;
         return -1;
     }
 
     view_port_draw_callback_set(state->view_port, rt_view_port_draw_callback, state);
     view_port_input_callback_set(state->view_port, rt_input_view_port_callback, state);
+    gui_add_framebuffer_callback(state->gui, rt_framebuffer_commit_callback, state);
+    state->front_buffer[0] = 0; // Force initial draw
     gui_add_view_port(state->gui, state->view_port, GuiLayerFullscreen);
+    //state->canvas = gui_direct_draw_acquire(state->gui);
+    if(state->canvas) {
+        canvas_clear(state->canvas);
+        canvas_commit(state->canvas);
+    }
 
     if(furi_mutex_acquire(state->game_mutex, FuriWaitForever) == FuriStatusOk) {
         setup();
@@ -283,11 +265,10 @@ extern "C" int32_t arduboy_app(void* p) {
 
     while(!state->exit_requested) {
         (void)rt_step_frame(state, 0);
-        rt_runtime_idle();
+        furi_delay_ms(1);
     }
 
-    Arduboy2Base* primary = rt_primary_arduboy();
-    primary->audio.off();
+    arduboy.audio.off();
 
     __atomic_store_n((bool*)&state->input_cb_enabled, false, __ATOMIC_RELEASE);
 
@@ -298,12 +279,18 @@ extern "C" int32_t arduboy_app(void* p) {
         state->view_port = NULL;
     }
 
-    rt_wait_input_callbacks_idle(state);
+    if(state->canvas) {
+        //gui_direct_draw_release(state->gui);
+        state->canvas = NULL;
+    }
 
     if(state->gui) {
+        gui_remove_framebuffer_callback(state->gui, rt_framebuffer_commit_callback, state);
         furi_record_close(RECORD_GUI);
         state->gui = NULL;
     }
+
+    rt_wait_input_callbacks_idle(state);
 
     if(state->fb_mutex) {
         furi_mutex_free(state->fb_mutex);
@@ -315,8 +302,7 @@ extern "C" int32_t arduboy_app(void* p) {
         state->game_mutex = NULL;
     }
 
-    free(state);
-    rt_state = NULL;
+    rt_state_initialized = false;
     buf = NULL;
 
     return 0;

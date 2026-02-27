@@ -1,14 +1,8 @@
 #include "../Arduboy2.h"
 #include "../runtime.h"
 
-Arduboy2Base* arduboy_ptr = nullptr;
-Sprites* sprites_ptr = nullptr;
-
-static Sprites ardulib_default_sprites;
-
-Sprites* ardulib_default_sprites_get(void) {
-    return &ardulib_default_sprites;
-}
+Arduboy2Base arduboy;
+Sprites sprites;
 
 void BeepPin1::begin() {
 }
@@ -111,36 +105,34 @@ bool Arduboy2Base::collide(Rect rect1, Rect rect2) {
 void Arduboy2Base::FlipperInputCallback(const InputEvent* event, void* ctx_ptr) {
     if(!event || !ctx_ptr) return;
     InputContext* ctx = (InputContext*)ctx_ptr;
-    volatile uint8_t* st = ctx->input_state;
-    InputRuntime* arduboy_ptr = ctx->runtime;
-    if(!st && !arduboy_ptr) return;
+    if(!ctx->input_state && !ctx->runtime) return;
 
     const uint8_t bit = FlipperInputMaskFromKey_(event->key);
     if(!bit) return;
 
     if(event->type == InputTypePress) {
-        if(arduboy_ptr) {
-            (void)__atomic_fetch_or((uint8_t*)&arduboy_ptr->held, bit, __ATOMIC_RELAXED);
-            (void)__atomic_fetch_or((uint8_t*)&arduboy_ptr->press_latch, bit, __ATOMIC_RELAXED);
+        if(ctx->runtime) {
+            (void)__atomic_fetch_or((uint8_t*)&ctx->runtime->held, bit, __ATOMIC_RELAXED);
+            (void)__atomic_fetch_or((uint8_t*)&ctx->runtime->press_latch, bit, __ATOMIC_RELAXED);
         }
-        if(st) {
-            (void)__atomic_fetch_or((uint8_t*)st, bit, __ATOMIC_RELAXED);
+        if(ctx->input_state) {
+            (void)__atomic_fetch_or((uint8_t*)ctx->input_state, bit, __ATOMIC_RELAXED);
         }
     } else if(event->type == InputTypeRepeat) {
         // Repeat keeps the held state alive, but must not retrigger justPressed edges.
-        if(arduboy_ptr) {
-            (void)__atomic_fetch_or((uint8_t*)&arduboy_ptr->held, bit, __ATOMIC_RELAXED);
+        if(ctx->runtime) {
+            (void)__atomic_fetch_or((uint8_t*)&ctx->runtime->held, bit, __ATOMIC_RELAXED);
         }
-        if(st) {
-            (void)__atomic_fetch_or((uint8_t*)st, bit, __ATOMIC_RELAXED);
+        if(ctx->input_state) {
+            (void)__atomic_fetch_or((uint8_t*)ctx->input_state, bit, __ATOMIC_RELAXED);
         }
     } else if(event->type == InputTypeRelease) {
-        if(arduboy_ptr) {
-            (void)__atomic_fetch_and((uint8_t*)&arduboy_ptr->held, (uint8_t)~bit, __ATOMIC_RELAXED);
-            (void)__atomic_fetch_or((uint8_t*)&arduboy_ptr->release_latch, bit, __ATOMIC_RELAXED);
+        if(ctx->runtime) {
+            (void)__atomic_fetch_and((uint8_t*)&ctx->runtime->held, (uint8_t)~bit, __ATOMIC_RELAXED);
+            (void)__atomic_fetch_or((uint8_t*)&ctx->runtime->release_latch, bit, __ATOMIC_RELAXED);
         }
-        if(st) {
-            (void)__atomic_fetch_and((uint8_t*)st, (uint8_t)~bit, __ATOMIC_RELAXED);
+        if(ctx->input_state) {
+            (void)__atomic_fetch_and((uint8_t*)ctx->input_state, (uint8_t)~bit, __ATOMIC_RELAXED);
         }
     }
 }

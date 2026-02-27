@@ -266,3 +266,8 @@ public:
 private:
     static Arduboy2Base* ab_;
 };
+
+extern Arduboy2Base arduboy;
+extern Sprites sprites;
+//#define arduboy 
+//#define sprites
