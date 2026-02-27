@@ -104,8 +104,6 @@ public:
     bool text_bg_enabled_ = false;
 
     // Флаги
-    bool pending_clear_after_present_ = false;
-    bool pending_display_ = false;
     bool external_timing_ = false;
 
     void begin(
@@ -151,7 +149,6 @@ public:
 
     void display();
     void display(bool clear);
-    void applyDeferredDisplayOps();
 
     void invert(bool);
 
