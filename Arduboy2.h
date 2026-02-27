@@ -77,24 +77,38 @@ using uint24_t = uint32_t;
 
 #include "include/obj.h"
 
+// Forward declaration for runtime cooperation
+struct ArduboyRuntimeState;
+
 class Arduboy2Base {
 public:
     ArduboyAudio audio;
 
-    struct InputRuntime {
-        volatile uint8_t held = 0;
-        volatile uint8_t press_latch = 0;
-        volatile uint8_t release_latch = 0;
-    };
+    // Прямой доступ к состоянию ввода - без InputContext/InputRuntime мостов
+    volatile uint8_t* input_state_ = nullptr;
+    volatile uint8_t* input_press_latch_ = nullptr;
 
-    struct InputContext {
-        volatile uint8_t* input_state = nullptr;
-        InputRuntime* runtime = nullptr;
-    };
+    // Состояние кнопок хранится напрямую в классе
+    uint8_t cur_buttons_ = 0;
+    uint8_t prev_buttons_ = 0;
+    uint8_t press_edges_ = 0;
+    uint8_t release_edges_ = 0;
 
-    InputContext* inputContext();
+    // Счётчик кадров и тайминг
+    uint32_t frame_count_ = 0;
+    uint32_t frame_duration_ms_ = 33;
+    uint32_t last_frame_ms_ = 0;
 
-    void clearInputMask(uint8_t input_mask);
+    // Курсор и текст
+    int16_t cursor_x_ = 0;
+    int16_t cursor_y_ = 0;
+    uint8_t text_color_ = WHITE;
+    uint8_t text_bg_ = BLACK;
+    bool text_bg_enabled_ = false;
+
+    // Флаги
+    bool pending_clear_after_present_ = false;
+    bool external_timing_ = false;
 
     void begin(
         uint8_t* screen_buffer,
@@ -105,17 +119,12 @@ public:
 
     void begin();
 
-    void begin(
-        uint8_t* screen_buffer,
-        volatile uint8_t* input_state,
-        FuriMutex* game_mutex,
-        volatile bool* exit_requested);
-
     void exitToBootloader();
 
     bool collide(Point point, Rect rect);
     bool collide(Rect rect1, Rect rect2);
 
+    // Прямой вызов из runtime.cpp без InputContext
     static void FlipperInputCallback(const InputEvent* event, void* ctx_ptr);
     static void FlipperInputClearMask(uint8_t input_mask, void* ctx_ptr);
 
@@ -198,6 +207,7 @@ private:
     static uint8_t FlipperInputMaskFromKey_(InputKey key);
 
     volatile bool* exit_requested_ = nullptr;
+    FuriMutex* game_mutex_ = nullptr;
 
     static uint8_t page_mask_(int16_t p, int16_t pages, int16_t h);
     static bool isSpriteVisible_(int16_t x, int16_t y, int16_t w, int16_t h);
@@ -218,30 +228,6 @@ private:
 
     static uint8_t mapInputToArduboyMask_(uint8_t in);
     void printUnsigned_(unsigned long value);
-
-    FuriMutex* game_mutex_ = nullptr;
-    bool external_timing_ = false;
-
-    volatile uint8_t* input_state_ = nullptr;
-    volatile uint8_t* input_press_latch_ = nullptr;
-    InputRuntime input_runtime_{};
-    InputContext input_ctx_{};
-
-    int16_t cursor_x_ = 0;
-    int16_t cursor_y_ = 0;
-    uint8_t text_color_ = WHITE;
-    uint8_t text_bg_ = BLACK;
-    bool text_bg_enabled_ = false;
-
-    uint32_t frame_duration_ms_ = 33;
-    uint32_t last_frame_ms_ = 0;
-    uint32_t frame_count_ = 0;
-    bool pending_clear_after_present_ = false;
-
-    uint8_t cur_buttons_ = 0;
-    uint8_t prev_buttons_ = 0;
-    uint8_t press_edges_ = 0;
-    uint8_t release_edges_ = 0;
 };
 
 class Arduboy2 : public Arduboy2Base {};
@@ -269,5 +255,3 @@ private:
 
 extern Arduboy2Base arduboy;
 extern Sprites sprites;
-//#define arduboy 
-//#define sprites

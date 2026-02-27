@@ -75,18 +75,6 @@ void arduboy_screen_invert(bool invert) {
     __atomic_store_n((bool*)&rt_state.screen_inverted, invert, __ATOMIC_RELEASE);
 }
 
-static Arduboy2Base::InputContext* rt_primary_input_context(void) {
-    return arduboy.inputContext();
-}
-
-static InputKey rt_map_input_key(InputKey key) {
-    return key;
-}
-
-static uint8_t rt_map_buttons(uint8_t buttons) {
-    return buttons;
-}
-
 static void rt_runtime_begin(
     uint8_t* screen_buffer,
     volatile uint8_t* input_state,
@@ -97,26 +85,12 @@ static void rt_runtime_begin(
     UNUSED(game_mutex);
     UNUSED(exit_requested);
 
+    // Инициализация Sprites для совместимости с играми
     Sprites::setArduboy(&arduboy);
 }
 
 uint16_t time_ms(void) {
     return (uint16_t)millis();
-}
-
-uint8_t poll_btns(void) {
-    uint8_t mask = 0;
-
-    arduboy.pollButtons();
-
-    if(arduboy.pressed(UP_BUTTON)) mask |= UP_BUTTON;
-    if(arduboy.pressed(DOWN_BUTTON)) mask |= DOWN_BUTTON;
-    if(arduboy.pressed(LEFT_BUTTON)) mask |= LEFT_BUTTON;
-    if(arduboy.pressed(RIGHT_BUTTON)) mask |= RIGHT_BUTTON;
-    if(arduboy.pressed(A_BUTTON)) mask |= A_BUTTON;
-    if(arduboy.pressed(B_BUTTON)) mask |= B_BUTTON;
-
-    return rt_map_buttons(mask);
 }
 
 static void rt_input_view_port_callback(InputEvent* event, void* context) {
@@ -129,13 +103,8 @@ static void rt_input_view_port_callback(InputEvent* event, void* context) {
     (void)__atomic_fetch_add((uint32_t*)&state->input_cb_inflight, 1, __ATOMIC_ACQ_REL);
 
     if(__atomic_load_n((bool*)&state->input_cb_enabled, __ATOMIC_ACQUIRE)) {
-        InputEvent mapped_event = *event;
-        mapped_event.key = rt_map_input_key(mapped_event.key);
-
-        Arduboy2Base::InputContext* primary_ctx = rt_primary_input_context();
-        if(primary_ctx) {
-            Arduboy2Base::FlipperInputCallback(&mapped_event, primary_ctx);
-        }
+        // Прямой вызов без InputContext - передаём указатель на arduboy
+        Arduboy2Base::FlipperInputCallback(event, &arduboy);
     }
 
     (void)__atomic_fetch_sub((uint32_t*)&state->input_cb_inflight, 1, __ATOMIC_ACQ_REL);
@@ -223,8 +192,13 @@ extern "C" int32_t arduboy_app(void* p) {
     memset(state->front_buffer, 0x00, RuntimeBufferSize);
     buf = state->screen_buffer;
 
+    // Прямая инициализация arduboy с передачей всех необходимых указателей
     arduboy.begin(
-        state->screen_buffer, &state->input_state, state->game_mutex, &state->exit_requested);
+        state->screen_buffer,
+        &state->input_state,
+        &state->input_state, 
+        state->game_mutex,
+        &state->exit_requested);
     rt_runtime_begin(
         state->screen_buffer, &state->input_state, state->game_mutex, &state->exit_requested);
 

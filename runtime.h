@@ -10,7 +10,6 @@
 extern uint8_t* buf;
 
 uint16_t time_ms(void);
-uint8_t poll_btns(void);
 
 bool arduboy_screen_inverted(void);
 void arduboy_screen_invert(bool invert);
