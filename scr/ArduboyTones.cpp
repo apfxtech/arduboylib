@@ -154,8 +154,9 @@ void ardulib_tone_deinit() {
 }
 
 void ArduboyTones::begin() {
-    g_arduboy_audio_enabled = true;
-    ardulib_tone_init();
+    if(g_arduboy_audio_enabled) {
+        ardulib_tone_init();
+    }
 }
 
 void ArduboyTones::volumeMode(uint8_t mode) {
@@ -175,6 +176,9 @@ bool ArduboyTones::playing() {
 void ArduboyTones::tones(const uint16_t* pattern) {
     if(!g_arduboy_audio_enabled) return;
     if(!pattern) return;
+    if(!g_arduboy_sound_queue) {
+        ardulib_tone_init();
+    }
     if(!g_arduboy_sound_queue) return;
 
     ArduboyToneSoundRequest req = {.pattern = pattern};

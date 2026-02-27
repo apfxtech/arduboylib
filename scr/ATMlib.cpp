@@ -1,4 +1,6 @@
+#ifdef ARDULIB_USE_ATM
 #include "../ATMlib.h"
+#include "../include/ArduboyAudioState.h"
 
 #include <string.h>
 #include <furi.h>
@@ -122,7 +124,7 @@ static FuriThread* ardulib_atm_thread = NULL;
 static FuriMessageQueue* ardulib_atm_cmd_q = NULL;
 static void dma_isr(void* ctx);
 
-static uint8_t ardulib_atm_audio_enabled = 1;
+static uint8_t ardulib_atm_audio_enabled = 0;
 
 static inline uint8_t ardulib_atm_render_logical_sample_u8() {
     osc[2].phase = (uint16_t)(osc[2].phase + osc[2].freq);
@@ -735,6 +737,7 @@ static int32_t ardulib_atm_thread_fn(void* /*ctx*/) {
 ATMsynth ATM;
 
 void ATMsynth::systemInit() {
+    __atomic_store_n(&ardulib_atm_audio_enabled, g_arduboy_audio_enabled ? 1 : 0, __ATOMIC_RELAXED);
     if(ardulib_atm_cmd_q) return;
     ardulib_atm_cmd_q = furi_message_queue_alloc(8, sizeof(AtmCmd));
 
@@ -747,6 +750,13 @@ void ATMsynth::systemInit() {
 }
 
 void ATMsynth::systemDeinit() {
+    if(!ardulib_atm_cmd_q || !ardulib_atm_thread) {
+        ardulib_atm_running = false;
+        ardulib_atm_paused = false;
+        __atomic_store_n(&ardulib_atm_tick_pending, 0, __ATOMIC_RELAXED);
+        return;
+    }
+
     AtmCmd c{};
     c.type = AtmCmdQuit;
     furi_message_queue_put(ardulib_atm_cmd_q, &c, FuriWaitForever);
@@ -810,3 +820,4 @@ void ardulib_atm_system_deinit(void) {
 void ardulib_atm_set_enabled(uint8_t en) {
     ATMsynth::setEnabled(en != 0);
 }
+#endif

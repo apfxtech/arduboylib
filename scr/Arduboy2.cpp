@@ -64,6 +64,7 @@ void Arduboy2Base::begin(
     frame_count_ = 0;
     last_frame_ms_ = 0;
     resetInputState();
+    audio.begin();
 }
 
 void Arduboy2Base::begin() {
