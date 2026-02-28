@@ -34,5 +34,4 @@ Creative Commons Legal Code (CC0 1.0 Universal)
 
 <a href="https://github.com/apfxtech/ArduboyLIB/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=apfxtech/ArduboyLIB" />
-  <img src="https://contrib.rocks/image?repo=MrBlinky/Arduboy-homemade-package" />
 </a>
