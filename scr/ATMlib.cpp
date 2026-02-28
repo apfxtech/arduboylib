@@ -749,7 +749,7 @@ void ATMsynth::systemInit() {
         return;
     }
 
-    furi_thread_set_name(ardulib_atm_thread, "ATMlib");
+    furi_thread_set_name(ardulib_atm_thread, "ArdulibATM");
     furi_thread_set_stack_size(ardulib_atm_thread, 2048);
     furi_thread_set_priority(ardulib_atm_thread, FuriThreadPriorityHigh);
     furi_thread_set_callback(ardulib_atm_thread, ardulib_atm_thread_fn);

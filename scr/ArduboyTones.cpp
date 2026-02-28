@@ -142,7 +142,7 @@ void ardulib_tone_init() {
 
     g_arduboy_sound_queue = queue;
     g_arduboy_sound_thread = thread;
-    furi_thread_set_name(thread, "ArduboySound");
+    furi_thread_set_name(thread, "ArdulibTones");
     furi_thread_set_stack_size(thread, 1024);
     furi_thread_set_priority(thread, FuriThreadPriorityNormal);
     furi_thread_set_callback(thread, ardulib_tone_sound_thread_fn);
