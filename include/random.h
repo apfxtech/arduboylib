@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef ARDUBBOYLIB_RANDOM_LEGACY
+#ifndef ARDULIB_RANDOM_LEGACY
 #include <furi_hal_random.h>
 #endif
 
