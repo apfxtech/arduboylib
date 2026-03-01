@@ -8,8 +8,6 @@ static inline size_t fx_min_sz(size_t a, size_t b) {
 static inline uint16_t fx_be16(const uint8_t* p) {
     return ((uint16_t)p[0] << 8) | (uint16_t)p[1];
 }
-extern Arduboy2Ext arduboy;
-
 uint16_t FX::programDataPage = 0;
 uint16_t FX::programSavePage = 0;
 

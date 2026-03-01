@@ -135,11 +135,22 @@ public:
     void pollButtons();
     void clearButtonState();
     void resetInputState();
+    uint8_t justPressedButtons() const;
+    uint8_t pressedButtons() const;
 
     bool pressed(uint8_t mask) const;
     bool notPressed(uint8_t mask) const;
     bool justPressed(uint8_t mask) const;
     bool justReleased(uint8_t mask) const;
+
+    void resetFrameCount();
+    uint16_t getFrameCount() const;
+    void setFrameCount(uint16_t val) const;
+    uint8_t getFrameCount(uint8_t mod, int8_t offset = 0) const;
+    bool getFrameCountHalf(uint8_t mod) const;
+    bool isFrameCount(uint8_t mod) const;
+    bool isFrameCount(uint8_t mod, uint8_t val) const;
+    uint8_t randomLFSR(uint8_t min, uint8_t max);
 
     uint8_t* getBuffer();
     const uint8_t* getBuffer() const;
@@ -223,6 +234,8 @@ private:
 
     static uint8_t mapInputToArduboyMask_(uint8_t in);
     void printUnsigned_(unsigned long value);
+
+    mutable int32_t frame_offset_ = 0;
 };
 
 class Arduboy2 : public Arduboy2Base {};

@@ -214,6 +214,56 @@ bool Arduboy2Base::justReleased(uint8_t mask) const {
            (((cur_buttons_ & mask) == 0) && ((prev_buttons_ & mask) != 0));
 }
 
+uint8_t Arduboy2Base::justPressedButtons() const {
+    return (uint8_t)(press_edges_ ? press_edges_ : (cur_buttons_ & (uint8_t)~prev_buttons_));
+}
+
+uint8_t Arduboy2Base::pressedButtons() const {
+    return cur_buttons_;
+}
+
+void Arduboy2Base::resetFrameCount() {
+    frame_offset_ = -(int32_t)frameCount();
+}
+
+uint16_t Arduboy2Base::getFrameCount() const {
+    return (uint16_t)((int32_t)frameCount() + frame_offset_);
+}
+
+void Arduboy2Base::setFrameCount(uint16_t val) const {
+    frame_offset_ = (int32_t)val - (int32_t)frameCount();
+}
+
+uint8_t Arduboy2Base::getFrameCount(uint8_t mod, int8_t offset) const {
+    if(mod == 0) return 0;
+    return (uint8_t)((getFrameCount() + offset) % mod);
+}
+
+bool Arduboy2Base::getFrameCountHalf(uint8_t mod) const {
+    return getFrameCount(mod) > (mod / 2);
+}
+
+bool Arduboy2Base::isFrameCount(uint8_t mod) const {
+    if(mod == 0) return false;
+    return (getFrameCount() % mod) == 0;
+}
+
+bool Arduboy2Base::isFrameCount(uint8_t mod, uint8_t val) const {
+    if(mod == 0) return false;
+    return (getFrameCount() % mod) == val;
+}
+
+uint16_t rnd = 0xACE1;
+
+uint8_t Arduboy2Base::randomLFSR(uint8_t min, uint8_t max) {
+    if(max <= min) return min;
+    uint16_t r = rnd;
+    r ^= (uint16_t)millis();
+    (r & 1) ? r = (r >> 1) ^ 0xB400 : r >>= 1;
+    rnd = r;
+    return (uint8_t)(r % (max - min) + min);
+}
+
 uint8_t* Arduboy2Base::getBuffer() {
     return sBuffer;
 }
