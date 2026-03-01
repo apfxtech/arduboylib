@@ -1,4 +1,5 @@
 #pragma once
+#ifdef ARDULIB_USE_FX
 
 #include <stdint.h>
 #include <stddef.h>
@@ -216,3 +217,5 @@ constexpr uint8_t dbmNormal_end = FX::dbmNormal_end;
 constexpr uint8_t dbmNormal_last = FX::dbmNormal_last;
 constexpr uint8_t dbmMasked_end = FX::dbmMasked_end;
 constexpr uint8_t dbmMasked_last = FX::dbmMasked_last;
+
+#endif // ARDULIB_USE_FX
