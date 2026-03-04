@@ -247,6 +247,9 @@ public:
     void timer();
     uint16_t freq(uint16_t f) const;
     void tone(uint16_t, uint16_t);
+
+private:
+    ArduboyTones tones_;
 };
 
 class Sprites {

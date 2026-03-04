@@ -50,13 +50,31 @@ const uint8_t Arduboy2Base::font5x7_[] PROGMEM = {
 
 
 // ============================================================================
-// BeepPin1 - legacy compatibility (пустые заглушки)
+// BeepPin1 - legacy compatibility
 // ============================================================================
 
-void BeepPin1::begin() {}
-void BeepPin1::timer() {}
-uint16_t BeepPin1::freq(uint16_t f) const { return f; }
-void BeepPin1::tone(uint16_t, uint16_t) {}
+void BeepPin1::begin() {
+    tones_.begin();
+}
+
+void BeepPin1::timer() {
+}
+
+uint16_t BeepPin1::freq(uint16_t f) const {
+    return f;
+}
+
+void BeepPin1::tone(uint16_t frequency, uint16_t duration_frames) {
+    if(duration_frames == 0) {
+        tones_.noTone();
+        return;
+    }
+
+    // Legacy BeepPin1 uses frame-based durations, typically at 60 FPS.
+    uint32_t duration_ms = ((uint32_t)duration_frames * 1000u + 30u) / 60u;
+    if(duration_ms == 0) duration_ms = 1;
+    tones_.tone(frequency, (uint16_t)duration_ms);
+}
 
 // ============================================================================
 // Sprites - API совместимости с оригинальным Arduboy2
