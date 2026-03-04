@@ -7,6 +7,10 @@
 #define PROGMEM
 #endif
 
+#ifndef strlen_P
+#define strlen_P(s) strlen((const char*)(s))
+#endif
+
 #ifndef pgm_read_byte
 #define pgm_read_byte(addr) (*(const uint8_t*)(addr))
 #endif

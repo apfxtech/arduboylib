@@ -10,7 +10,7 @@
 
 class EEPROMClass {
 public:
-    static constexpr int kSize = 57;
+    static constexpr int kSize = 1024;
     static constexpr size_t kPathSize = 128;
 
     EEPROMClass()
